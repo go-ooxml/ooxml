@@ -1,0 +1,6 @@
+# ⛔ The fixtures are real .docx, .xlsx and .pptx files — ZIP containers. Git
+# must not touch a byte of them: a line-ending normalisation on checkout
+# corrupts the archive, and the corruption only appears on the platform that
+# did it. There is no Windows test lane here to catch it, so the only guard is
+# this file.
+testdata/** binary
