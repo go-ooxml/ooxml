@@ -8,9 +8,10 @@ richdoc itself.
 ```go
 doc, err := ooxml.ParseWord(docx, opc.Limits{})          // .docx
 deck, err := ooxml.ParsePresentation(pptx, opc.Limits{}) // .pptx
+book, err := ooxml.ParseWorkbook(xlsx, opc.Limits{})     // .xlsx
 ```
 
-Word and PowerPoint are read today; Excel is next. The reason they are
+Word, PowerPoint and Excel are all read. The reason they are
 separate readers rather than one is the first thing worth knowing about this
 format.
 
@@ -95,6 +96,50 @@ There is no heading element in WordprocessingML. A heading is a `w:p` whose
 because a document may say it that way instead, and it is **zero-based** where
 richdoc is one-based: passing it through would make every top heading a level
 zero.
+
+
+## Excel: a cell's value is often not in the cell
+
+```go
+book, err := ooxml.ParseWorkbook(xlsx, opc.Limits{})
+```
+
+Each sheet comes out as a heading of its own **name** — `Q3 actuals` from
+`xl/workbook.xml`, not `sheet2.xml` from the disk — followed by its cells as a
+table.
+
+⛔ **With `t="s"`, which is what every piece of text in a real workbook uses,
+the `<v>` holds an INDEX into `xl/sharedStrings.xml`.** A reader that took
+`<v>` as the text produces a table of `0`, `1`, `2` … in place of every word —
+and it *looks like a working reader*, because small integers are plausible cell
+contents in a spreadsheet. Measured on a file LibreOffice wrote from a
+three-line CSV: every one of its five text cells was an index.
+
+An index the shared table does not hold yields **nothing**, not the number: a
+workbook whose strings are missing should come out with empty cells rather than
+with the indexes in place of its words.
+
+⛔ **A cell is placed by its reference, not by its position among its
+siblings.** A row writes only the cells that hold something — `<c r="A1"/>`
+then `<c r="C1"/>` for a row whose B is empty — so a reader that appended in
+order would shift C into B's place and every column after it. That is the
+defect which shows up as *"the numbers are in the wrong columns"* on somebody's
+real spreadsheet and on **no fixture**.
+
+| `t=` | the value is |
+| --- | --- |
+| `s` | an index into the shared strings |
+| `inlineStr` | in `<is><t>` on the cell itself |
+| `str` | a formula's string result, in `<v>` |
+| `b` | 0 or 1 in `<v>`, shown as FALSE or TRUE |
+| `e` | an error like `#DIV/0!`, in `<v>` |
+| `n` or absent | a number in `<v>` — Excel omits `t`, LibreOffice writes it, so both must work |
+
+The `<f>` beside a value is the **formula** and is dropped: `=SUM(A1:A9)` is
+what the cell computes with, and the number is what it showed.
+
+A **phonetic hint** (`rPh`) is stored beside a word and never shown in the
+cell; its `<t>` would otherwise be appended to the string.
 
 ## ⛔ Four things in the file that must not reach the document
 
