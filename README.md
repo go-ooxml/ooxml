@@ -6,10 +6,11 @@ Pure Go, CGO-free, including `GOOS=js`. The container is
 richdoc itself.
 
 ```go
-doc, err := ooxml.ParseWord(docx, opc.Limits{})   // .docx → *richdoc.Document
+doc, err := ooxml.ParseWord(docx, opc.Limits{})          // .docx
+deck, err := ooxml.ParsePresentation(pptx, opc.Limits{}) // .pptx
 ```
 
-Word is read today. Excel and PowerPoint are next, and the reason they are
+Word and PowerPoint are read today; Excel is next. The reason they are
 separate readers rather than one is the first thing worth knowing about this
 format.
 
@@ -29,6 +30,62 @@ different languages:
 | Excel | `c > v`, where `v` may be an **index** into `xl/sharedStrings.xml` |
 
 So there is one reader per format here. The thing they share is `opc`.
+
+
+## PowerPoint: the order is the list's
+
+```go
+doc, err := ooxml.ParsePresentation(pptx, opc.Limits{})
+```
+
+Each slide comes out as a heading of its **position**, followed by the text in
+its shapes.
+
+⛔ **The order comes from `p:sldIdLst`, not from the filenames.**
+`slide1.xml`, `slide2.xml` … are in order in a file straight out of a
+converter, and stop being in order the moment somebody moves a slide: the names
+stay where they were and the list changes. A reader that sorted by filename
+would silently reorder the deck, and it would pass every test written against a
+converted fixture — which is why there is a test whose list is the *reverse* of
+its filenames.
+
+The heading is the slide's position and not a title taken from a shape: a
+`.pptx` carries no name for a slide, and the placeholder that would say which
+shape is the title is absent from a converted deck — the same thing `go-odf`
+found for `.odp`, where `presentation:class` is stripped.
+
+### ⛔⛔ DrawingML carries its formatting as ATTRIBUTES
+
+This is the trap that makes a shared implementation wrong:
+
+| | a bold run is |
+| --- | --- |
+| WordprocessingML | `<w:rPr><w:b/></w:rPr>` — a child **element** |
+| DrawingML | `<a:rPr b="1"/>` — an **attribute** |
+
+A reader that reused Word's `runProps` here would find **no formatting at all**
+in a `.pptx`, because every child of `a:rPr` is a colour or a font and none of
+them is a toggle.
+
+And two of those attributes are **named values, not booleans**: `u="none"` and
+`strike="noStrike"` are *off*. Measured: LibreOffice writes
+`b="0" strike="noStrike" u="none"` on every run of a converted deck, so a
+reader treating the attribute's presence as "on" would make the whole deck
+bold, underlined and struck through at once.
+
+### A field means the opposite of Word's
+
+A slide's `a:fld` holds in its `a:t` the value a viewer **showed** — the page
+number, the date — so it is read. Word's `w:instrText` holds the
+**instructions** and is dropped. The two formats put opposite things in the
+same place, which is one more reason the readers are separate.
+
+### Bullets are what the file says
+
+`a:buChar` is a bulleted item, `a:buAutoNum` a numbered one, and ⛔ `a:buNone`
+says explicitly that a paragraph is **not** one — which has to be honoured,
+because a converted deck puts `marL` and `indent` on every paragraph of a text
+box, so an indent alone is not a bullet.
 
 ## ⛔ A heading is a paragraph wearing a style
 
