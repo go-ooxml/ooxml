@@ -11,9 +11,75 @@ deck, err := ooxml.ParsePresentation(pptx, opc.Limits{}) // .pptx
 book, err := ooxml.ParseWorkbook(xlsx, opc.Limits{})     // .xlsx
 ```
 
-Word, PowerPoint and Excel are all read. The reason they are
-separate readers rather than one is the first thing worth knowing about this
-format.
+and back out again:
+
+```go
+docx, err := ooxml.WriteWord(doc)       // headings, paragraphs, lists, tables
+xlsx, err := ooxml.WriteWorkbook(doc)   // the document's tables, one per sheet
+```
+
+Word, PowerPoint and Excel are all read; Word and Excel are written. The reason
+the readers are separate rather than one is the first thing worth knowing about
+this format.
+
+## Writing one
+
+⛔ **What comes back is a package, not a rendering.** Word decides how wide a
+column is, where a page breaks and what a heading looks like. This says which
+paragraph is a heading and which cells are a row, and the styles part gives
+those names something to mean.
+
+⛔ **The heading styles are defined, not left to Word's latent ones.** A
+`w:pStyle` naming a style the package does not define works in Word, which
+knows `Heading1` already — and shows as plain text in a reader that does not,
+which is most of them. Defining them costs a few hundred bytes and is the
+difference between a heading and a paragraph everywhere but Word.
+
+⛔ **It is not a round trip with `ParseWord`.** A document read from Word and
+written back loses everything richdoc has no word for — the fonts, the margins,
+the section properties, the revision history — because richdoc is a *document*
+model and not a .docx model. Said here because "write what you read" is the
+obvious thing to expect and it is not what this does.
+
+⛔ **`WriteWorkbook` writes only the tables.** A spreadsheet is a grid of cells
+and a document is not, so the prose around a table has nowhere to go — and
+putting it in column A of a sheet of its own would make a file that looks like
+a document and works as neither. A document with no tables gives one empty
+sheet, because "there was nothing to put in a grid" is an answer.
+
+Three things the file must get right, where the program refuses the whole
+document rather than the part:
+
+| | |
+|---|---|
+| every cell needs a paragraph | a `w:tc` with nothing in it is what makes Word call a document corrupt, so a short row is filled out and an empty cell still gets one |
+| `xml:space="preserve"` on every run | without it a reader that follows the standard trims a run, and a document rebuilt from runs that each lost their edges reads as onewordafteranother |
+| a sheet name is built, never taken | Excel refuses a name over 31 characters, one holding `: \ / ? * [ ]`, or a duplicate — and it refuses the **file**, not the name |
+
+### ⛔ The judge for a writer cannot be its own reader
+
+Almost every test writes a package and reads it back with `ParseWord` or
+`ParseWorkbook`. That proves the two agree, and **two halves of one package
+agreeing is the weakest evidence there is**: a file our reader is delighted
+with can be a file Word refuses, and that failure turns up in somebody's hands.
+
+Three things turned out to be invisible to the round trip, because our reader
+is more forgiving than the standard — an `Override`'s absolute `PartName`, the
+`.rels` Default, and `xml:space` — so those are asserted by their **spelling**,
+with a `.docx` Word itself produced as the control.
+
+And where **LibreOffice** is installed it is asked, which is a reader other
+people wrote from the same standard. Measured 2026-10-12, on a 2-page PDF read
+through `go-pdfkit/document` and written out here:
+
+```text
+soffice --convert-to txt out.docx →  headings, paragraphs, and bullets indented
+soffice --convert-to csv out.xlsx →  Activité RFCM …,Réalisation
+```
+
+That test **skips** where LibreOffice is not installed, which includes CI. A
+skipped test is not a gate, which is why the result is written down here with
+its date rather than left to imply one.
 
 ## ⛔ One container, three vocabularies — the opposite of ODF
 
