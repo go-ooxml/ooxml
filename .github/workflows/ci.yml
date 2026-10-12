@@ -81,3 +81,44 @@ jobs:
           export GOOS=$(echo "${{ matrix.target }}" | cut -d/ -f1)
           export GOARCH=$(echo "${{ matrix.target }}" | cut -d/ -f2)
           go build ./...
+
+  # ⛔ CROSS-BUILDING IS NOT RUNNING. The job above proves this package
+  # compiles for s390x; it says nothing about what it does when the byte order
+  # differs. The landing claimed "the tests run on six architectures" while
+  # they ran on one, which is what made this lane necessary rather than nice.
+  #
+  # The pattern is go-pdfkit's: qemu-user-static plus `go test -exec=`, which
+  # needs no container and no privileged runner.
+  arch-qemu:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goarch: riscv64, exec: "-exec=qemu-riscv64-static" }
+          - { goarch: loong64, exec: "-exec=qemu-loongarch64-static" }
+          - { goarch: ppc64le, exec: "-exec=qemu-ppc64le-static" }
+          - { goarch: s390x,   exec: "-exec=qemu-s390x-static" }
+          - { goarch: arm64,   exec: "-exec=qemu-aarch64-static" }
+          # ⛔ 386 and arm are deliberately absent: qemu-i386 loses the guest's
+          # floating-point state across an asynchronous preemption, which makes
+          # a flake out of correct code (go-pdfkit measured 5 failures in 8
+          # runs there, 0 with asyncpreemptoff=1), and a lane that flakes is a
+          # lane people learn to ignore.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.2"
+      - run: sudo apt-get update && sudo apt-get install -y qemu-user-static
+      # ⛔ No -race: the detector needs cgo, and cgo needs a cross compiler for
+      # the guest. What this lane is for is byte order and word size.
+      #
+      # ⛔ And no LibreOffice: it is not built for these architectures, and the
+      # test that asks it skips when it is absent -- so this lane runs the
+      # readers and the writers against their own fixtures, which is what byte
+      # order can break.
+      - name: Test under qemu (${{ matrix.goarch }})
+        run: GOARCH=${{ matrix.goarch }} go test ${{ matrix.exec }} ./...
