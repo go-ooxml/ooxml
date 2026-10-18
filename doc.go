@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Package ooxml reads Office Open XML documents into the neutral
-// [github.com/go-richdoc/richdoc] model: Word (.docx), and in time Excel
-// (.xlsx) and PowerPoint (.pptx).
+// [github.com/go-richdoc/richdoc] model — Word (.docx), Excel (.xlsx) and
+// PowerPoint (.pptx) — and writes them: [WriteWord] and [WriteWorkbook] from
+// a document, [WritePresentation] from a deck of rendered slides.
 //
 // # One container, three vocabularies
 //
