@@ -16,9 +16,10 @@ and back out again:
 ```go
 docx, err := ooxml.WriteWord(doc)       // headings, paragraphs, lists, tables
 xlsx, err := ooxml.WriteWorkbook(doc)   // the document's tables, one per sheet
+pptx, err := ooxml.WritePresentation(p) // one picture per slide, with speaker notes
 ```
 
-Word, PowerPoint and Excel are all read; Word and Excel are written. The reason
+Word, PowerPoint and Excel are all read and all written. The reason
 the readers are separate rather than one is the first thing worth knowing about
 this format.
 
@@ -58,8 +59,8 @@ document rather than the part:
 
 ### ⛔ The judge for a writer cannot be its own reader
 
-Almost every test writes a package and reads it back with `ParseWord` or
-`ParseWorkbook`. That proves the two agree, and **two halves of one package
+Almost every test writes a package and reads it back with `ParseWord`,
+`ParseWorkbook` or `ParsePresentation`. That proves the two agree, and **two halves of one package
 agreeing is the weakest evidence there is**: a file our reader is delighted
 with can be a file Word refuses, and that failure turns up in somebody's hands.
 
@@ -80,6 +81,46 @@ soffice --convert-to csv out.xlsx →  Activité RFCM …,Réalisation
 That test **skips** where LibreOffice is not installed, which includes CI. A
 skipped test is not a gate, which is why the result is written down here with
 its date rather than left to imply one.
+
+### A deck is written as pictures
+
+```go
+pptx, err := ooxml.WritePresentation(ooxml.Presentation{
+	Width: 1280 * 9525, Height: 720 * 9525, // EMU: a CSS pixel is 9525
+	Title: "Deck", Author: "Ada", Subject: "…", Keywords: "a, b",
+	Slides: []ooxml.PresentationSlide{
+		{Image: png1, ImageType: "png", Notes: "what to say", Name: "Opening"},
+	},
+})
+```
+
+This is what `marp-cli --pptx` writes, and it is for the same consumer: a
+renderer whose output **is** the slide. Each slide is one full-slide `p:pic`
+over a blank layout, its `Name` is the picture's alternative text, and its
+`Notes` go to a notes slide — written only for a slide that has notes, as
+ECMA-376 §13.3.5 asks.
+
+⛔ **The output is deterministic.** No clock is read: `Created` is written to
+`dcterms:created` and `modified` only when given, and every id is a position.
+
+⛔ **The ids are the standard's ranges, not counters from 1.** A slide id is
+256 or more (`ST_SlideId`), a master's or layout's 2³¹ or more, and the master
+and its layouts share that space.
+
+⛔ **The bounds are the reader's.** Slide size 914 400 – 51 206 400 EMU
+(`ST_SlideSizeCoordinate`), at most 1000 slides, 64 MiB a picture and 192 MiB
+of pictures in all, 1 MiB a text — so what this writes, `ParsePresentation`
+reads under the default `opc.Limits`. A picture whose signature is not its
+`ImageType` is refused: the type becomes the part's content type, and a JPEG
+called PNG is a blank slide.
+
+The part set is the one §13.3 requires — one master, one layout, a theme, the
+presentation properties — plus the notes master, view properties and table
+styles that marp-cli 4.5.1's output carries. ParsePresentation reads the
+slides back and **none of their words**: the words are in the pictures.
+Measured 2026-10-18 with LibreOffice: a three-slide deck converts to a
+three-page PDF, each page the picture edge to edge, and to an `.odp` whose
+`presentation:notes` hold the notes.
 
 ## ⛔ One container, three vocabularies — the opposite of ODF
 

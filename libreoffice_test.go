@@ -4,9 +4,13 @@
 package ooxml
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -73,6 +77,60 @@ func TestLibreOfficeOpensWhatWeWrote(t *testing.T) {
 			if !strings.Contains(string(got), want) {
 				t.Errorf("%s: LibreOffice did not read %q:\n%s", filepath.Base(c.in), want, got)
 			}
+		}
+	}
+}
+
+// LibreOffice opens the deck, makes a page of each slide, and finds the
+// speaker notes where PowerPoint keeps them.
+//
+// The page count is read from the PDF LibreOffice writes; the notes from the
+// .odp it converts the deck to, where they are a presentation:notes element
+// on each page — which they become only if LibreOffice took our notes slide
+// for a notes slide.
+func TestLibreOfficeOpensTheDeckWeWrote(t *testing.T) {
+	soffice := findSoffice()
+	if soffice == "" {
+		t.Skip("no LibreOffice here: the structural checks are the only judge")
+	}
+	dir := t.TempDir()
+	pptx := filepath.Join(dir, "deck.pptx")
+	if err := os.WriteFile(pptx, writeDeck(t, deck(t)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, to := range []string{"pdf", "odp"} {
+		cmd := exec.Command(soffice, "--headless", "--convert-to", to, "--outdir", dir, pptx)
+		cmd.Env = append(os.Environ(), "HOME="+dir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("LibreOffice refused the deck: %v\n%s", err, out)
+		}
+	}
+	pdf, err := os.ReadFile(filepath.Join(dir, "deck.pdf"))
+	if err != nil {
+		t.Fatalf("LibreOffice wrote no PDF: %v", err)
+	}
+	if n := len(regexp.MustCompile(`/Type\s*/Page[^s]`).FindAll(pdf, -1)); n != 3 {
+		t.Errorf("the PDF has %d pages, want 3", n)
+	}
+	odp, err := os.ReadFile(filepath.Join(dir, "deck.odp"))
+	if err != nil {
+		t.Fatalf("LibreOffice wrote no .odp: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(odp), int64(len(odp)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var content []byte
+	for _, f := range zr.File {
+		if f.Name == "content.xml" {
+			rc, _ := f.Open()
+			content, _ = io.ReadAll(rc)
+			rc.Close()
+		}
+	}
+	for _, want := range []string{"first note", "second line", "a &lt; b &amp;", "presentation:notes"} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf("LibreOffice did not read %q from the notes", want)
 		}
 	}
 }
