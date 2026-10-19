@@ -96,15 +96,33 @@ type Presentation struct {
 	// bytes for the same input: a writer that stamped the clock could not be
 	// diffed, cached or reproduced.
 	Created time.Time
+
+	// Images are the pictures editable slides' shapes show (Shape.Image),
+	// each stored once in the package however many slides show it.
+	Images []Image
+
+	// Fonts are typefaces embedded in the deck, for viewers that do not
+	// have them (p:embeddedFontLst, §19.2.1.10). Embed only fonts whose
+	// licence allows it.
+	Fonts []Font
 }
 
-// A PresentationSlide is one slide: a picture that covers it, and its notes.
+// A PresentationSlide is one slide: a picture that covers it, or editable
+// shapes, or both (the picture at the back), and its notes.
 type PresentationSlide struct {
 	// Image is the picture, stretched over the whole slide; render it at the
 	// slide's aspect ratio. ImageType is "png" or "jpeg", and is checked
-	// against the image's own signature.
+	// against the image's own signature. It may be left out when the slide
+	// has Shapes or a Background.
 	Image     []byte
 	ImageType string
+
+	// Background is the slide's background (p:bg); nil leaves the master's,
+	// which is none.
+	Background *Fill
+
+	// Shapes are the slide's editable content, back to front.
+	Shapes []Shape
 
 	// Notes are the speaker notes, one paragraph per line. Empty writes no
 	// notes slide, as ECMA-376 §13.3.5 asks: one per slide THAT HAS notes.
@@ -118,10 +136,11 @@ type PresentationSlide struct {
 
 // WritePresentation writes a deck as a PresentationML package (.pptx).
 //
-// ⛔ A slide is a PICTURE. This is what marp-cli's --pptx writes too: the
-// rendering is the deck, and a slide rebuilt from text boxes would be a
-// different slide in every viewer's fonts. So [ParsePresentation] reads back
-// the slides and none of their words — the words are in the picture.
+// A slide is a picture (what marp-cli's --pptx writes), editable shapes
+// (Shapes: text boxes, filled and gradient shapes, pictures — set in fonts
+// the deck can embed, so that it is the same slide in every viewer), or both.
+// [ParsePresentation] reads back the text boxes' words; a picture's are in
+// the picture.
 //
 // ⛔ The output is deterministic: the same Presentation gives the same bytes.
 // No clock is read (see [Presentation.Created]) and every id is a position.
@@ -149,6 +168,27 @@ func WritePresentation(p Presentation) ([]byte, error) {
 		})
 	}
 	next := n + 2
+	// The embedded fonts: one part per face, related from the presentation
+	// and named in its embeddedFontLst (§19.2.1.9).
+	var fontRefs [][4]string
+	for i, f := range p.Fonts {
+		var ref [4]string
+		for j, data := range [][]byte{f.Regular, f.Bold, f.Italic, f.BoldItal} {
+			if data == nil {
+				continue
+			}
+			name := "fonts/font" + strconv.Itoa(i+1) + "_" + strconv.Itoa(j) + ".ttf"
+			parts = append(parts, opc.NewPart{Name: "ppt/" + name, ContentType: ctFontData, Data: data})
+			ref[j] = "rId" + strconv.Itoa(next)
+			presRels = append(presRels, opc.Rel{ID: ref[j], Type: relFont, Target: name})
+			next++
+		}
+		fontRefs = append(fontRefs, ref)
+	}
+	for i, img := range p.Images {
+		parts = append(parts, opc.NewPart{Name: "ppt/" + imageName(i+1, img), ContentType: "image/" + img.Type, Data: img.Data})
+	}
+	notesRel := next
 	for _, r := range []struct{ typ, target string }{
 		{relNotesMaster, "notesMasters/notesMaster1.xml"},
 		{relPresProps, "presProps.xml"},
@@ -162,7 +202,7 @@ func WritePresentation(p Presentation) ([]byte, error) {
 	rels["ppt/presentation.xml"] = presRels
 
 	parts = append(parts,
-		opc.NewPart{Name: "ppt/presentation.xml", ContentType: ctPresentation, Data: presentationXML(p, n+2)},
+		opc.NewPart{Name: "ppt/presentation.xml", ContentType: ctPresentation, Data: presentationXML(p, notesRel, fontRefs)},
 		opc.NewPart{Name: "ppt/presProps.xml", ContentType: ctPresProps, Data: []byte(xml.Header + `<p:presentationPr xmlns:p="` + nsP + `"/>`)},
 		opc.NewPart{Name: "ppt/viewProps.xml", ContentType: ctViewProps, Data: []byte(xml.Header + `<p:viewPr xmlns:p="` + nsP + `"/>`)},
 		// def is required, and this GUID is PowerPoint's own "no style" —
@@ -187,32 +227,48 @@ func WritePresentation(p Presentation) ([]byte, error) {
 	for i, s := range p.Slides {
 		num := strconv.Itoa(i + 1)
 		slide := "ppt/slides/slide" + num + ".xml"
-		media := "media/image" + num + "." + s.ImageType
 		name := s.Name
 		if name == "" {
 			name = "Slide " + num
 		}
-		parts = append(parts,
-			opc.NewPart{Name: slide, ContentType: ctSlide, Data: slideXML(p, name)},
-			opc.NewPart{Name: "ppt/" + media, ContentType: "image/" + s.ImageType, Data: s.Image},
-		)
-		slideRels := []opc.Rel{
-			{ID: "rId1", Type: relSlideLayout, Target: "../slideLayouts/slideLayout1.xml"},
-			{ID: "rId2", Type: relImage, Target: "../" + media},
+		slideRels := []opc.Rel{{ID: "rId1", Type: relSlideLayout, Target: "../slideLayouts/slideLayout1.xml"}}
+		picRel := ""
+		if s.Image != nil {
+			media := "media/image" + num + "." + s.ImageType
+			parts = append(parts, opc.NewPart{Name: "ppt/" + media, ContentType: "image/" + s.ImageType, Data: s.Image})
+			picRel = "rId" + strconv.Itoa(len(slideRels)+1)
+			slideRels = append(slideRels, opc.Rel{ID: picRel, Type: relImage, Target: "../" + media})
 		}
 		if s.Notes != "" {
 			notes := "ppt/notesSlides/notesSlide" + num + ".xml"
 			parts = append(parts, opc.NewPart{Name: notes, ContentType: ctNotesSlide, Data: notesXML(s.Notes)})
-			slideRels = append(slideRels, opc.Rel{ID: "rId3", Type: relNotesSlide, Target: "../notesSlides/notesSlide" + num + ".xml"})
+			slideRels = append(slideRels, opc.Rel{ID: "rId" + strconv.Itoa(len(slideRels)+1), Type: relNotesSlide, Target: "../notesSlides/notesSlide" + num + ".xml"})
 			rels[notes] = []opc.Rel{
 				{ID: "rId1", Type: relNotesMaster, Target: "../notesMasters/notesMaster1.xml"},
 				{ID: "rId2", Type: relSlide, Target: "../slides/slide" + num + ".xml"},
 			}
 		}
+		sp := newSlideParts(len(slideRels) + 1)
+		parts = append(parts, opc.NewPart{Name: slide, ContentType: ctSlide, Data: slideXML(p, s, name, picRel, sp)})
+		for _, r := range sp.order {
+			rel := opc.Rel{ID: r.id, Type: r.typ, Target: r.target}
+			if r.external {
+				rel.External = true
+			}
+			slideRels = append(slideRels, rel)
+		}
 		rels[slide] = slideRels
 	}
 	return opc.Build(parts, rels)
 }
+
+// The embedded fonts' content and relationship types. The data is the font
+// file itself, which §15.2.13 types application/x-font-ttf (Open Font
+// Format); application/x-fontdata would announce Embedded OpenType.
+const (
+	ctFontData = "application/x-font-ttf"
+	relFont    = relDoc + "font"
+)
 
 // checkPresentation refuses what would make a file PowerPoint refuses, or one
 // larger than the bounds above.
@@ -238,8 +294,12 @@ func checkPresentation(p Presentation) error {
 	}
 	var total int64
 	for i, s := range p.Slides {
-		if err := checkImage(s); err != nil {
-			return fmt.Errorf("ooxml: slide %d: %w", i+1, err)
+		// A slide with editable content may do without a picture; one with
+		// neither is a blank the caller did not mean.
+		if s.Image != nil || (len(s.Shapes) == 0 && s.Background == nil) {
+			if err := checkImage(s); err != nil {
+				return fmt.Errorf("ooxml: slide %d: %w", i+1, err)
+			}
 		}
 		if len(s.Notes) > maxTextBytes || len(s.Name) > maxTextBytes {
 			return fmt.Errorf("ooxml: slide %d: its notes or name are past the %d bytes allowed", i+1, maxTextBytes)
@@ -249,7 +309,7 @@ func checkPresentation(p Presentation) error {
 			return fmt.Errorf("ooxml: the pictures come to more than the %d bytes allowed", maxImagesBytes)
 		}
 	}
-	return nil
+	return checkShapes(p)
 }
 
 // checkImage refuses a picture that is not what its type says.
@@ -283,10 +343,14 @@ func checkImage(s PresentationSlide) error {
 // 256 or more (ST_SlideId), and a master or layout id 2^31 or more
 // (ST_SlideMasterId, ST_SlideLayoutId) — and the master's and its layouts'
 // share one space, which is why the layout is 2147483649.
-func presentationXML(p Presentation, notesRel int) []byte {
+func presentationXML(p Presentation, notesRel int, fontRefs [][4]string) []byte {
 	var b bytes.Buffer
 	b.WriteString(xml.Header)
-	fmt.Fprintf(&b, `<p:presentation xmlns:a=%q xmlns:r=%q xmlns:p=%q>`, nsA, nsR, nsP)
+	fmt.Fprintf(&b, `<p:presentation xmlns:a=%q xmlns:r=%q xmlns:p=%q`, nsA, nsR, nsP)
+	if len(p.Fonts) > 0 {
+		b.WriteString(` embedTrueTypeFonts="1"`)
+	}
+	b.WriteString(`>`)
 	b.WriteString(`<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>`)
 	fmt.Fprintf(&b, `<p:notesMasterIdLst><p:notesMasterId r:id="rId%d"/></p:notesMasterIdLst>`, notesRel)
 	b.WriteString(`<p:sldIdLst>`)
@@ -298,23 +362,47 @@ func presentationXML(p Presentation, notesRel int) []byte {
 	// The notes page is a portrait sheet of paper whatever the slide is:
 	// 7.5 × 10 inches, as PowerPoint writes it.
 	b.WriteString(`<p:notesSz cx="6858000" cy="9144000"/>`)
+	if len(p.Fonts) > 0 {
+		b.WriteString(`<p:embeddedFontLst>`)
+		for i, f := range p.Fonts {
+			b.WriteString(`<p:embeddedFont><p:font typeface="`)
+			esc(&b, f.Typeface)
+			b.WriteString(`"/>`)
+			for j, el := range []string{"regular", "bold", "italic", "boldItalic"} {
+				if id := fontRefs[i][j]; id != "" {
+					b.WriteString(`<p:` + el + ` r:id="` + id + `"/>`)
+				}
+			}
+			b.WriteString(`</p:embeddedFont>`)
+		}
+		b.WriteString(`</p:embeddedFontLst>`)
+	}
 	b.WriteString(`</p:presentation>`)
 	return b.Bytes()
 }
 
-// slideXML writes one slide: a picture from corner to corner.
-func slideXML(p Presentation, name string) []byte {
+// slideXML writes one slide: its background, the picture from corner to
+// corner when it has one (picRel), then its shapes.
+func slideXML(p Presentation, s PresentationSlide, name, picRel string, sp *slideParts) []byte {
 	var b bytes.Buffer
 	b.WriteString(xml.Header)
 	fmt.Fprintf(&b, `<p:sld xmlns:a=%q xmlns:r=%q xmlns:p=%q><p:cSld name="`, nsA, nsR, nsP)
 	esc(&b, name)
-	b.WriteString(`"><p:spTree>`)
+	b.WriteString(`">`)
+	writeBackground(&b, s.Background)
+	b.WriteString(`<p:spTree>`)
 	b.WriteString(emptyGroup)
-	b.WriteString(`<p:pic><p:nvPicPr><p:cNvPr id="2" name="Picture 1" descr="`)
-	esc(&b, name)
-	b.WriteString(`"/><p:cNvPicPr><a:picLocks noGrp="1" noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>`)
-	b.WriteString(`<p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>`)
-	fmt.Fprintf(&b, `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`, p.Width, p.Height)
+	target := func(i int) string { return "../" + imageName(i, p.Images[i-1]) }
+	first := 2
+	if picRel != "" {
+		first = 3 // the shapes' ids follow the picture's
+		b.WriteString(`<p:pic><p:nvPicPr><p:cNvPr id="2" name="Picture 1" descr="`)
+		esc(&b, name)
+		b.WriteString(`"/><p:cNvPicPr><a:picLocks noGrp="1" noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>`)
+		b.WriteString(`<p:blipFill><a:blip r:embed="` + picRel + `"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>`)
+		fmt.Fprintf(&b, `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`, p.Width, p.Height)
+	}
+	writeShapes(&b, s.Shapes, first, sp, target)
 	b.WriteString(`</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`)
 	return b.Bytes()
 }
