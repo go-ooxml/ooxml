@@ -122,6 +122,46 @@ Measured 2026-10-18 with LibreOffice: a three-slide deck converts to a
 three-page PDF, each page the picture edge to edge, and to an `.odp` whose
 `presentation:notes` hold the notes.
 
+### … or as editable shapes
+
+A slide can instead hold `Shapes`, drawn back to front, and a `Background`:
+
+```go
+ooxml.PresentationSlide{
+	Background: &ooxml.Fill{Kind: ooxml.FillSolid, Color: ooxml.RGBA{R: 16, G: 32, B: 48, A: 255}},
+	Shapes: []ooxml.Shape{
+		{X: x, Y: y, W: w, H: h, Geometry: ooxml.Geometry{Preset: "roundRect", Radius: r},
+			Fill: ooxml.Fill{Kind: ooxml.FillGradient, Angle: 45, Stops: stops}},
+		{X: x, Y: y, W: w, H: h, Text: []ooxml.TextRun{{Text: "Hello", Font: "Lato", Size: 26, Link: "https://…"}}},
+		{X: x, Y: y, W: w, H: h, Image: 1, Crop: [4]float64{0.1, 0, 0.1, 0}},
+	},
+}
+```
+
+- A shape is a `p:sp` (ECMA-376 Part 1 §19.3.1.43): a preset geometry
+  (`rect`, `roundRect` with its radius, `ellipse`) or a custom one
+  (`a:custGeom`, §20.1.9.8: lines and cubic Béziers, several outlines in one
+  path so that overlaps are holes, as a border ring needs), filled with a
+  solid colour (with an `a:alpha`) or a gradient (`a:gradFill`, §20.1.8.33:
+  any number of stops, linear at an angle — `a:lin`, unscaled — or radial
+  from a centre).
+- `Text` makes it a text box: one paragraph of runs (typeface, size,
+  bold/italic, colour, letter spacing `spc`, an `a:hlinkClick` for http,
+  https and mailto links only), no inset, no wrap — it stays on the line it
+  was laid out on.
+- `Image` makes it a `p:pic` of `Presentation.Images[Image-1]`, cropped by
+  `a:srcRect`. Each image is one part however many slides show it.
+- `Presentation.Fonts` are embedded (`p:embeddedFontLst`, §19.2.1.10) as
+  `application/x-font-ttf` parts, the content type §15.2.13 gives the font
+  file itself (`application/x-fontdata` would announce Embedded OpenType).
+  Measured 2026-10-19 with LibreOffice 25.8: a deck set in Lato, which the
+  machine did not have, renders in Lato.
+
+The bounds hold here too: 20 000 shapes a slide, 64 fonts of at most 32 MiB,
+coordinates under 2⁴⁰ EMU, sizes 1–4000 pt; every text is XML-escaped (and
+fuzzed: `FuzzEditableText`). `ParsePresentation` reads the text boxes' words
+back.
+
 ## ⛔ One container, three vocabularies — the opposite of ODF
 
 In OpenDocument, `office:text`, `office:spreadsheet`, `office:presentation` and
