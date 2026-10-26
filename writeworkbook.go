@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-ooxml/ooxml/internal/xstring"
 	"github.com/go-ooxml/opc"
 	"github.com/go-richdoc/richdoc"
 )
@@ -175,7 +176,10 @@ func sheetXML(t richdoc.Table) []byte {
 			// Inline strings cost bytes and cannot disagree with anything.
 			fmt.Fprintf(&b, `<c r="%s%d" t="inlineStr"><is><t xml:space="preserve">`,
 				columnName(c), r+1)
-			esc(&b, text)
+			// ⛔ An ST_Xstring (§22.9.2.19): a control character is spelled
+			// _xHHHH_, and text that only looks like such a spelling has its
+			// underscore escaped, or a reader would decode it.
+			esc(&b, xstring.Encode(text))
 			b.WriteString(`</t></is></c>`)
 		}
 		b.WriteString(`</row>`)

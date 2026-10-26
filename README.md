@@ -19,6 +19,18 @@ xlsx, err := ooxml.WriteWorkbook(doc)   // the document's tables, one per sheet
 pptx, err := ooxml.WritePresentation(p) // one picture per slide, with speaker notes
 ```
 
+and, for a program that has numbers rather than a document, typed workbooks
+with [`xlsx`](#typed-workbooks-package-xlsx):
+
+```go
+wb := xlsx.New()
+sh, _ := wb.AddSheet("Costs")
+sh.SetHeader("Model", "Cost", "Share", "Day") // bold, pane frozen below it
+sh.AppendRow(xlsx.String("opus"), xlsx.Number(18.5).Format(xlsx.Decimal(2)),
+	xlsx.Number(0.425).Format(xlsx.Percent(1)), xlsx.Date(day))
+data, err := wb.Write()
+```
+
 Word, PowerPoint and Excel are all read and all written. The reason
 the readers are separate rather than one is the first thing worth knowing about
 this format.
@@ -81,6 +93,60 @@ soffice --convert-to csv out.xlsx →  Activité RFCM …,Réalisation
 That test **skips** where LibreOffice is not installed, which includes CI. A
 skipped test is not a gate, which is why the result is written down here with
 its date rather than left to imply one.
+
+### Typed workbooks: package `xlsx`
+
+`WriteWorkbook` writes a document's tables, and every cell of a document is
+text. [`github.com/go-ooxml/ooxml/xlsx`](https://pkg.go.dev/github.com/go-ooxml/ooxml/xlsx)
+is for a program that has types — a report, an export — and it depends on
+`opc` only, not on richdoc.
+
+```go
+func New() *Workbook
+func (w *Workbook) AddSheet(name string) (*Sheet, error)
+func (w *Workbook) Write() ([]byte, error)
+
+func (s *Sheet) SetHeader(titles ...string) error        // bold row 1, pane frozen below it
+func (s *Sheet) AppendRow(cells ...Cell) error
+func (s *Sheet) SetColumnWidth(col int, width float64) error // col 0 is A; width in characters
+
+func Number(v float64) Cell
+func String(s string) Cell
+func Bool(v bool) Cell
+func Date(t time.Time) Cell   // a date serial shown yyyy-mm-dd, read on t's own wall clock
+func (c Cell) Format(f Format) Cell
+func (c Cell) Bold() Cell     // the zero Cell is an empty one
+
+func Decimal(places int) Format // #,##0.00
+func Percent(places int) Format // 0.0%
+var General, DateFormat, DateTimeFormat Format
+```
+
+| | |
+| --- | --- |
+| a number is a number | written as `<v>`, so the sheet can sum it; NaN and ±Inf are refused, a spreadsheet has neither |
+| a date is a serial | days since 1899-12-30 with the time as the fraction (ECMA-376 Part 1 §18.17.4.1), and a `yyyy-mm-dd` format written out in full rather than built-in format 14, whose spelling depends on the reader's locale |
+| ⛔ no formula, ever | there is no API for one, and `"=SUM(A1)"`, `"+1"`, `"-1"`, `"@x"` are shared strings. Their cells also carry `quotePrefix`, so that a person who edits one in Excel and presses Enter does not turn it into a formula |
+| ⛔ ST_Xstring both ways | a control character is spelled `_x0001_` (§22.9.2.19), and text that only *looks* like such a spelling — `"_x0041_"` — has its underscore escaped as `_x005F_`, or a reader would show `A`. The reader in this package now decodes it too, and `WriteWorkbook` encodes it |
+| refused, not repaired | a sheet name Excel would reject (over 31 characters, `: \ / ? * [ ]`, a leading or trailing apostrophe, `History`, a duplicate in any case) is an error rather than a silent rename |
+| bounded | Excel's own limits on every row added — 1 048 576 rows, 16 384 columns, 32 767 UTF-16 characters a cell, widths up to 255 — and every part under `opc.Limits`' defaults, so `ParseWorkbook` reads back whatever `Write` produces |
+| deterministic | no clock is read; the same workbook gives the same bytes |
+
+Judged, 2026-10-26, beyond the round trip through `ParseWorkbook`:
+
+```text
+LibreOffice 25.8, --convert-to csv (cells as shown):
+  opus,1234567,"1,234.50",42.5%,2026-10-26,TRUE,=1+1
+openpyxl 3.1.5: types n/s/b/d, formats, bold, quotePrefix, freeze_panes "A2", widths
+```
+
+⚠ openpyxl does **not** decode `_xHHHH_` in shared strings (its
+`reader/strings.py` only deletes `x005F_`), so a control character written
+here reads back there as the six characters `_x0001_`. LibreOffice decodes it.
+Both judges skip where they are not installed, which includes CI;
+`XLSX_JUDGE_OPENPYXL=1` turns the openpyxl one on where `uvx` can fetch it.
+`FuzzWrite` holds the property that any cell values give either a refusal or
+a package whose every part is well-formed and whose texts read back.
 
 ### A deck is written as pictures
 
