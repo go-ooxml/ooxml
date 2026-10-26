@@ -53,6 +53,18 @@ jobs:
             exit 1
           fi
 
+  # Known vulnerabilities in the module's dependencies and in the standard
+  # library it calls, as the rest of the fleet checks (go-plot/plot).
+  security:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.2"
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
   cross-build:
     runs-on: ubuntu-latest
     env:
