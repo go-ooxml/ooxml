@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-ooxml/ooxml/internal/xstring"
 	"github.com/go-ooxml/opc"
 	"github.com/go-richdoc/richdoc"
 )
@@ -191,7 +192,10 @@ func sharedStrings(data []byte) ([]string, error) {
 					if err != nil {
 						return nil, err
 					}
-					sb.WriteString(s)
+					// ⛔ <t> is an ST_Xstring (§22.9.2.19): a character XML
+					// cannot carry is spelled _xHHHH_, and the underscore of
+					// text that merely looks like one is spelled _x005F_.
+					sb.WriteString(xstring.Decode(s))
 				}
 			case "rPh":
 				// ⛔ A phonetic hint — the reading of a Japanese word, which a
@@ -440,7 +444,7 @@ func inlineString(dec *xml.Decoder, se xml.StartElement) (string, error) {
 				if err != nil {
 					return "", err
 				}
-				sb.WriteString(s)
+				sb.WriteString(xstring.Decode(s))
 				continue
 			}
 			if err := dec.Skip(); err != nil {

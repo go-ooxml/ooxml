@@ -462,6 +462,39 @@ func TestAnEmptyCellKeepsTheOnesAfterItInPlace(t *testing.T) {
 	}
 }
 
+// ⛔ A cell's text is an ST_Xstring (§22.9.2.19) both ways: a control
+// character is spelled _x0001_ on the way out and decoded on the way in, and
+// text that merely looks like such a spelling survives as itself.
+func TestTextThatLooksLikeAnEscapeSurvives(t *testing.T) {
+	const text = "_x0041_ then \x01"
+	d := &richdoc.Document{Blocks: []richdoc.Block{
+		richdoc.Table{Rows: [][]richdoc.Cell{{{Inlines: []richdoc.Inline{richdoc.Txt(text)}}}}},
+	}}
+	b, err := WriteWorkbook(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := opc.Open(b, opc.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet, err := p.Part("xl/worksheets/sheet1.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sheet), `_x005F_x0041_ then _x0001_`) {
+		t.Errorf("not escaped:\n%s", sheet)
+	}
+	back, err := ParseWorkbook(b, opc.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := back.Blocks[1].(richdoc.Table).Rows[0][0].Inlines[0].(richdoc.Text).Value
+	if got != text {
+		t.Errorf("read back %q, want %q", got, text)
+	}
+}
+
 // ⛔ The spreadsheet column spelling, which is NOT the one PDF page labels
 // use: the 27th is AA in both and the 28th is AB here and BB there. The two
 // look alike exactly where somebody would check and part company one step
