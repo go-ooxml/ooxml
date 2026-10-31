@@ -42,7 +42,21 @@ type Shape struct {
 	// Name names the shape (p:cNvPr name); for a picture it is also the
 	// alternative text. Empty gives a numbered name.
 	Name string
+
+	// Group, when not empty, makes the shape a group (p:grpSp, §19.3.1.22)
+	// of these shapes, which a viewer selects, moves and scales as one: an
+	// SVG drawing, a formula. The children are placed in slide coordinates
+	// like any shape, and X, Y, W, H is the group's box (its a:xfrm, whose
+	// child offset and extents equal it, so the children are where they
+	// say). Geometry, Fill, Text and Image are then ignored. A group may hold
+	// groups, MaxGroupDepth deep; every shape in it counts towards the
+	// slide's limit.
+	Group []Shape
 }
+
+// MaxGroupDepth bounds how deep groups nest: a reader walks the tree
+// recursively.
+const MaxGroupDepth = 32
 
 // Geometry is a shape's outline (§20.1.9). Preset is one of the preset
 // shapes: "" or "rect", "roundRect" (corner radius Radius EMU), "ellipse".
@@ -168,8 +182,8 @@ func checkShapes(p Presentation) error {
 		return fmt.Errorf("ooxml: the pictures come to more than the %d bytes allowed", maxImagesBytes)
 	}
 	for i, s := range p.Slides {
-		if len(s.Shapes) > maxShapesPerSlide {
-			return fmt.Errorf("ooxml: slide %d: %d shapes is past the %d allowed", i+1, len(s.Shapes), maxShapesPerSlide)
+		if n := countShapes(s.Shapes, 0); n > maxShapesPerSlide {
+			return fmt.Errorf("ooxml: slide %d: %d shapes is past the %d allowed", i+1, n, maxShapesPerSlide)
 		}
 		if s.Background != nil {
 			if err := checkFill(*s.Background); err != nil {
@@ -177,7 +191,7 @@ func checkShapes(p Presentation) error {
 			}
 		}
 		for j, sh := range s.Shapes {
-			if err := checkShape(sh, len(p.Images)); err != nil {
+			if err := checkShape(sh, len(p.Images), 0); err != nil {
 				return fmt.Errorf("ooxml: slide %d shape %d: %w", i+1, j+1, err)
 			}
 		}
@@ -185,14 +199,42 @@ func checkShapes(p Presentation) error {
 	return nil
 }
 
+// countShapes counts the shapes of a tree, groups and their members, and
+// stops counting past the limit (or past MaxGroupDepth, which checkShape
+// refuses): it bounds its own work.
+func countShapes(shapes []Shape, depth int) int {
+	n := len(shapes)
+	if depth >= MaxGroupDepth {
+		return n
+	}
+	for _, sh := range shapes {
+		if n > maxShapesPerSlide {
+			return n
+		}
+		n += countShapes(sh.Group, depth+1)
+	}
+	return n
+}
+
 func coordOK(v int64) bool { return v > -maxCoordinate && v < maxCoordinate }
 
-func checkShape(sh Shape, images int) error {
+func checkShape(sh Shape, images, depth int) error {
 	if !coordOK(sh.X) || !coordOK(sh.Y) || sh.W < 0 || sh.H < 0 || sh.W >= maxCoordinate || sh.H >= maxCoordinate {
 		return fmt.Errorf("its box %d,%d %d×%d is out of range", sh.X, sh.Y, sh.W, sh.H)
 	}
 	if len(sh.Name) > maxTextBytes {
 		return fmt.Errorf("its name is past the %d bytes allowed", maxTextBytes)
+	}
+	if len(sh.Group) > 0 {
+		if depth+1 >= MaxGroupDepth {
+			return fmt.Errorf("groups nest past the %d levels allowed", MaxGroupDepth)
+		}
+		for k, c := range sh.Group {
+			if err := checkShape(c, images, depth+1); err != nil {
+				return fmt.Errorf("member %d: %w", k+1, err)
+			}
+		}
+		return nil
 	}
 	if sh.Image != 0 {
 		if sh.Image < 0 || sh.Image > images {
@@ -330,9 +372,31 @@ const relHyperlink = relDoc + "hyperlink"
 // first (1 is the tree itself). The background, p:bg, comes before the tree
 // and is writeBackground's.
 func writeShapes(b *bytes.Buffer, shapes []Shape, first int, sp *slideParts, imageTarget func(int) string) {
-	for i, sh := range shapes {
-		id := strconv.Itoa(i + first)
+	next := first
+	writeShapeList(b, shapes, &next, sp, imageTarget)
+}
+
+// writeShapeList writes shapes in order, numbering them from *next on, the
+// members of a group after the group itself.
+func writeShapeList(b *bytes.Buffer, shapes []Shape, next *int, sp *slideParts, imageTarget func(int) string) {
+	for _, sh := range shapes {
+		id := strconv.Itoa(*next)
+		*next++
 		name := sh.Name
+		if len(sh.Group) > 0 {
+			if name == "" {
+				name = "Group " + id
+			}
+			b.WriteString(`<p:grpSp><p:nvGrpSpPr><p:cNvPr id="` + id + `" name="`)
+			esc(b, name)
+			b.WriteString(`"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr>`)
+			fmt.Fprintf(b, `<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/><a:chOff x="%d" y="%d"/><a:chExt cx="%d" cy="%d"/></a:xfrm>`,
+				sh.X, sh.Y, sh.W, sh.H, sh.X, sh.Y, sh.W, sh.H)
+			b.WriteString(`</p:grpSpPr>`)
+			writeShapeList(b, sh.Group, next, sp, imageTarget)
+			b.WriteString(`</p:grpSp>`)
+			continue
+		}
 		if sh.Image != 0 {
 			if name == "" {
 				name = "Picture " + id
