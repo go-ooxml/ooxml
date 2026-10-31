@@ -256,6 +256,90 @@ func TestEditableSharesRelationships(t *testing.T) {
 	}
 }
 
+// group is a drawing of three shapes, one of them a group in its turn, and
+// a word: what an SVG becomes on an editable slide.
+func group() Shape {
+	sq := [][]PathCmd{{{Op: 'M', P: [3]Point{{0, 0}}}, {Op: 'L', P: [3]Point{{50, 0}}}, {Op: 'L', P: [3]Point{{50, 50}}}, {Op: 'Z'}}}
+	return Shape{X: 1000, Y: 2000, W: 300, H: 200, Name: "an SVG", Group: []Shape{
+		{X: 1000, Y: 2000, W: 50, H: 50, Geometry: Geometry{Paths: sq}, Fill: Fill{Kind: FillSolid, Color: RGBA{R: 255, A: 255}}},
+		{X: 1100, Y: 2000, W: 200, H: 100, Group: []Shape{
+			{X: 1100, Y: 2000, W: 50, H: 50, Geometry: Geometry{Preset: "ellipse"}, Fill: Fill{Kind: FillSolid, Color: RGBA{B: 255, A: 255}}},
+		}},
+		{X: 1000, Y: 2100, W: 300000, H: 100000, Text: []TextRun{{Text: "grouped words", Size: 12, Color: RGBA{A: 255}}}},
+	}}
+}
+
+// TestEditableGroups: a group is a p:grpSp whose child space is its own box,
+// numbered before its members, nested groups inside it, and its text reads
+// back.
+func TestEditableGroups(t *testing.T) {
+	p := editable(t)
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, group())
+	deck := writeDeck(t, p)
+	s1 := string(unzip(t, deck)["ppt/slides/slide1.xml"])
+	for _, want := range []string{
+		`<p:grpSp><p:nvGrpSpPr><p:cNvPr id="8" name="an SVG"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="1000" y="2000"/><a:ext cx="300" cy="200"/><a:chOff x="1000" y="2000"/><a:chExt cx="300" cy="200"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="9" name="Shape 9"/>`,
+		`<p:grpSp><p:nvGrpSpPr><p:cNvPr id="10" name="Group 10"/>`,
+		`<p:cNvPr id="11" name="Shape 11"/>`,
+		`</p:sp></p:grpSp><p:sp><p:nvSpPr><p:cNvPr id="12" name="TextBox 12"/>`,
+		`</p:sp></p:grpSp></p:spTree>`,
+	} {
+		if !strings.Contains(s1, want) {
+			t.Errorf("slide1.xml lacks %s", want)
+		}
+	}
+	doc, err := ParsePresentation(deck, opc.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := richdoc.PlainText(doc); !strings.Contains(text, "grouped words") {
+		t.Errorf("the words in a group do not read back: %q", text)
+	}
+}
+
+// TestEditableGroupsRefuse: a group's members are checked like any shape,
+// count towards the slide's limit, and nest MaxGroupDepth deep at most.
+func TestEditableGroupsRefuse(t *testing.T) {
+	p := editable(t)
+	g := group()
+	g.Group[1].Group[0].W = -1
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, g)
+	if _, err := WritePresentation(p); err == nil || !strings.Contains(err.Error(), "member 2: member 1:") {
+		t.Errorf("a bad member: %v", err)
+	}
+
+	deep := Shape{W: 1, H: 1}
+	for i := 0; i < MaxGroupDepth; i++ {
+		deep = Shape{W: 1, H: 1, Group: []Shape{deep}}
+	}
+	p = editable(t)
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, deep)
+	if _, err := WritePresentation(p); err == nil || !strings.Contains(err.Error(), "nest") {
+		t.Errorf("groups %d deep: %v", MaxGroupDepth+1, err)
+	}
+	p = editable(t)
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, deep.Group[0].Group[0]) // MaxGroupDepth-1 groups
+	if _, err := WritePresentation(p); err != nil {
+		t.Errorf("groups %d deep: %v", MaxGroupDepth-1, err)
+	}
+
+	old := maxShapesPerSlide
+	maxShapesPerSlide = len(editable(t).Slides[0].Shapes) + 2
+	defer func() { maxShapesPerSlide = old }()
+	p = editable(t)
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, group()) // 1 + 3 + 1 shapes
+	if _, err := WritePresentation(p); err == nil || !strings.Contains(err.Error(), "shapes is past") {
+		t.Errorf("members past the limit: %v", err)
+	}
+	wide := Shape{W: 1, H: 1}
+	for i := 0; i < 2*maxShapesPerSlide; i++ {
+		wide.Group = append(wide.Group, Shape{W: 1, H: 1, Group: []Shape{{W: 1, H: 1}}})
+	}
+	if n := countShapes([]Shape{wide}, 0); n > 2*maxShapesPerSlide+2 {
+		t.Errorf("countShapes went on to %d past the limit", n)
+	}
+}
+
 func nan() float64 {
 	var z float64
 	return z / z
@@ -305,6 +389,7 @@ func TestLibreOfficeOpensTheEditableDeck(t *testing.T) {
 	dir := t.TempDir()
 	p := editable(t)
 	p.Fonts = nil // the fake font data is not a font
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, group())
 	in := filepath.Join(dir, "deck.pptx")
 	if err := os.WriteFile(in, writeDeck(t, p), 0o644); err != nil {
 		t.Fatal(err)
@@ -320,5 +405,8 @@ func TestLibreOfficeOpensTheEditableDeck(t *testing.T) {
 	}
 	if !strings.Contains(string(txt), "Héllo <b>&\"") {
 		t.Errorf("the PDF LibreOffice made does not hold the slide's text: %q", txt)
+	}
+	if !strings.Contains(string(txt), "grouped words") {
+		t.Errorf("LibreOffice did not draw the text of a group: %q", txt)
 	}
 }

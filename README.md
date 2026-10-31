@@ -217,13 +217,20 @@ ooxml.PresentationSlide{
   was laid out on.
 - `Image` makes it a `p:pic` of `Presentation.Images[Image-1]`, cropped by
   `a:srcRect`. Each image is one part however many slides show it.
+- `Group` makes it a group (`p:grpSp`, §19.3.1.22) of those shapes, which a
+  viewer selects, moves and scales as one, for example an SVG drawing or a
+  formula. The members are placed in slide coordinates like any shape. The
+  group's `a:xfrm` has a child offset and extents equal to its own box, so the
+  members land exactly where they say. Groups nest up to `MaxGroupDepth` (32)
+  levels, and every member counts towards the slide's shape limit. Checked
+  with LibreOffice, which draws a group's text.
 - `Presentation.Fonts` are embedded (`p:embeddedFontLst`, §19.2.1.10) as
   `application/x-font-ttf` parts, the content type §15.2.13 gives the font
   file itself (`application/x-fontdata` would announce Embedded OpenType).
   Measured 2026-10-19 with LibreOffice 25.8: a deck set in Lato, which the
   machine did not have, renders in Lato.
 
-The bounds hold here too: 20 000 shapes a slide, 64 fonts of at most 32 MiB,
+The bounds hold here too: 20 000 shapes a slide (group members included), 64 fonts of at most 32 MiB,
 coordinates under 2⁴⁰ EMU, sizes 1–4000 pt; every text is XML-escaped (and
 fuzzed: `FuzzEditableText`). `ParsePresentation` reads the text boxes' words
 back.
