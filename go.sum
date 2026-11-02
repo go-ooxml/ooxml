@@ -1,6 +1,4 @@
-github.com/go-ooxml/opc v0.1.0 h1:fRRxBjrjS5L7MxMIBajwm1SFGBnoXT8uS/a7WMBDwwY=
-github.com/go-ooxml/opc v0.1.0/go.mod h1:WCilIcfGDpa5sRf2uNbXFKYg7MCog6I00ahuWTWXUyw=
-github.com/go-ooxml/opc v0.2.0 h1:qdd3jPmPA6c8tT2CH0x9Jc0Wsj3lXIE3+cvQUvDJB8Y=
-github.com/go-ooxml/opc v0.2.0/go.mod h1:WCilIcfGDpa5sRf2uNbXFKYg7MCog6I00ahuWTWXUyw=
-github.com/go-richdoc/richdoc v0.6.0 h1:cema3hE5AAektDXTmvhWyBVnkCcZTVKhnkingwqsN7k=
-github.com/go-richdoc/richdoc v0.6.0/go.mod h1:RhxAcqwoUg1pnTYCiRdKILzOZwOmraO0dMJI4N6yY70=
+github.com/go-ooxml/opc v0.2.1 h1:nmdBy61n4M84wLcq/6duANaebB2FOLNCwJOu2E2A87Y=
+github.com/go-ooxml/opc v0.2.1/go.mod h1:WCilIcfGDpa5sRf2uNbXFKYg7MCog6I00ahuWTWXUyw=
+github.com/go-richdoc/richdoc v0.7.0 h1:vhHypa0y26ulrOz6Aw1RIzeLjSMsFJyU1SzK5jd90lg=
+github.com/go-richdoc/richdoc v0.7.0/go.mod h1:RhxAcqwoUg1pnTYCiRdKILzOZwOmraO0dMJI4N6yY70=
