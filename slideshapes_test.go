@@ -6,6 +6,9 @@ package ooxml
 import (
 	"bytes"
 	"encoding/xml"
+	"image"
+	"image/color"
+	"image/gif"
 	"io"
 	"os"
 	"os/exec"
@@ -408,5 +411,41 @@ func TestLibreOfficeOpensTheEditableDeck(t *testing.T) {
 	}
 	if !strings.Contains(string(txt), "grouped words") {
 		t.Errorf("LibreOffice did not draw the text of a group: %q", txt)
+	}
+}
+
+// An animated GIF is a picture a shape can show: it is stored once with the
+// type and content type of a GIF, and a slide show plays it.
+func TestGIFPictures(t *testing.T) {
+	g := gif.GIF{LoopCount: 0}
+	for i := 0; i < 2; i++ {
+		img := image.NewPaletted(image.Rect(0, 0, 4, 4), []color.Color{color.Black, color.White})
+		img.SetColorIndex(i, i, 1)
+		g.Image, g.Delay = append(g.Image, img), append(g.Delay, 10)
+	}
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, &g); err != nil {
+		t.Fatal(err)
+	}
+	p := editable(t)
+	p.Images = append(p.Images, Image{Data: buf.Bytes(), Type: "gif"})
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, Shape{X: 0, Y: 0, W: 100, H: 100, Image: len(p.Images)})
+	deck := writeDeck(t, p)
+	files := unzip(t, deck)
+	var found bool
+	for name, data := range files {
+		if strings.HasPrefix(name, "ppt/media/") && strings.HasSuffix(name, ".gif") {
+			found = bytes.Equal(data, buf.Bytes())
+		}
+	}
+	if !found {
+		t.Fatal("the GIF is not stored as a .gif part, byte for byte")
+	}
+	if !strings.Contains(string(files["[Content_Types].xml"]), "image/gif") {
+		t.Error("the package does not declare image/gif")
+	}
+	p.Images[len(p.Images)-1].Data = []byte("not a gif")
+	if _, err := WritePresentation(p); err == nil {
+		t.Error("a picture that is not a GIF must be refused")
 	}
 }

@@ -324,8 +324,10 @@ func checkImage(s PresentationSlide) error {
 		magic = "\x89PNG\r\n\x1a\n"
 	case "jpeg":
 		magic = "\xff\xd8\xff"
+	case "gif":
+		magic = "GIF8" // GIF87a and GIF89a: an animated GIF plays in a slide show
 	default:
-		return fmt.Errorf("image type %q is not png or jpeg", s.ImageType)
+		return fmt.Errorf("image type %q is not png, jpeg or gif", s.ImageType)
 	}
 	if len(s.Image) > maxImageBytes {
 		return fmt.Errorf("a picture of %d bytes is past the %d allowed", len(s.Image), maxImageBytes)
