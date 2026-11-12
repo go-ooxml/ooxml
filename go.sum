@@ -1,4 +1,4 @@
 github.com/go-ooxml/opc v0.2.1 h1:nmdBy61n4M84wLcq/6duANaebB2FOLNCwJOu2E2A87Y=
 github.com/go-ooxml/opc v0.2.1/go.mod h1:WCilIcfGDpa5sRf2uNbXFKYg7MCog6I00ahuWTWXUyw=
-github.com/go-richdoc/richdoc v0.9.0 h1:t3XcDNQN+e2KrEERu6qctlYahSDZkbEGgGDeZxta3iA=
-github.com/go-richdoc/richdoc v0.9.0/go.mod h1:xsldfEfOJy3uWrzpXuz57+w915kDv5B0rPGKiqAzHQs=
+github.com/go-richdoc/richdoc v0.10.0 h1:+BsIDF1iX1QNzk96uMX6VbsVmiGwXoabFdBkI+01UBQ=
+github.com/go-richdoc/richdoc v0.10.0/go.mod h1:zZIyjS9RnUk0qC9kz1cTZsQHdbBZlKSMXWsTZOEeowc=
